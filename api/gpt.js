@@ -99,12 +99,28 @@ module.exports = async (req, res) => {
 
   try {
     // Vercel Node 함수에서 req.body가 문자열일 수 있음
-    const raw = req.body ?? {};
-    const body = (typeof raw === 'string') ? JSON.parse(raw || '{}') : raw;
+    let bodyText = "";
+try {
+  const chunks = [];
+  for await (const ch of req) chunks.push(Buffer.isBuffer(ch) ? ch : Buffer.from(ch));
+  if (chunks.length) bodyText = Buffer.concat(chunks).toString("utf8");
+} catch (_) {}
 
-    // "arguments"는 JS 예약어라 혼선을 피하기 위해 다른 식별자 사용
-    const { function_name, arguments: argsRaw } = body;
-    const args = argsRaw ?? {};
+let body = {};
+try {
+  if (bodyText) {
+    body = JSON.parse(bodyText);           // 스트림에서 UTF-8로 직접 파싱
+  } else if (typeof req.body === "string") {
+    body = JSON.parse(req.body || "{}");   // Vercel이 문자열로 준 경우
+  } else if (req.body && typeof req.body === "object") {
+    body = req.body;                        // 이미 객체인 경우
+  }
+} catch (e) {
+  return res.status(400).json({ status: "ERROR", message: "Invalid JSON body", debug: { err: String(e) } });
+}
+
+const { function_name, arguments: argsRaw } = body;
+const args = argsRaw ?? {};
 
     if (function_name !== 'search_safety_law') {
       return res.status(400).json({ status: 'ERROR', message: 'Unknown function_name' });
