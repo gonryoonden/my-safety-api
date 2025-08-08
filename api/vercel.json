@@ -1,9 +1,0 @@
-{
-  "functions": {
-    "api/gpt.js": {
-      "memory": 256,
-      "maxDuration": 10,
-      "regions": ["icn1", "hnd1", "sin1"]
-    }
-  }
-}
