@@ -1,13 +1,10 @@
 {
   "version": 2,
 
-  // 루트(/)만 /api로 넘겨서 헬스/문서 페이지를 띄우고,
-  // /api/gpt 같은 실제 함수 경로는 건드리지 않습니다.
   "rewrites": [
     { "source": "/", "destination": "/api" }
   ],
 
-  // 서버리스 함수별 리전/리소스 고정
   "functions": {
     "api/gpt.js":   { "memory": 256, "maxDuration": 10, "regions": ["hnd1", "sin1"] },
     "api/egress.js":{ "memory": 128, "maxDuration": 5,  "regions": ["hnd1", "sin1"] }
