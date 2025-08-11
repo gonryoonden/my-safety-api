@@ -1,7 +1,7 @@
 # main.py
 
-from dotenv import load_dotenv; load_dotenv()
 from __future__ import annotations
+from dotenv import load_dotenv; load_dotenv()
 import asyncio
 from typing import AsyncGenerator
 from fastapi import FastAPI, Query, Request, Depends
@@ -62,7 +62,7 @@ async def handle_upstream_error(request: Request, exc: UpstreamServiceError):
 async def search_laws(
     q: str = Query(..., description="검색할 법령명 키워드"),
     page: int = Query(1, ge=1, description="페이지 번호"),
-    size: int = Query(10, ge=1, le=100, description="페이지 당 결과 수"),
+    size: int = Query(10, ge=1, le=100, description="페이지 당 결과 수", alias="display"),
     client: LawClient = Depends(get_law_client),
 ) -> SearchResponse:
     """
