@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import asyncio
+from typing import AsyncGenerator
 from fastapi import FastAPI, Query, Request, Depends
 from fastapi.responses import JSONResponse
 
@@ -19,7 +20,7 @@ app = FastAPI(
 # --- 의존성 주입 (Dependency Injection) ---
 # 앱 전체에서 공유할 LawClient 인스턴스를 생성합니다.
 # 이렇게 하면 API 요청마다 클라이언트를 새로 만들지 않아 효율적입니다.
-async def get_law_client() -> LawClient:
+async def get_law_client() -> AsyncGenerator[LawClient, None]:
     client = LawClient()
     try:
         yield client
@@ -99,3 +100,9 @@ async def get_law_detail(
     detail_data = await client.get_law_detail(law_id)
     return LawDetail(**detail_data)
     
+
+# --- 앱 실행 (로컬 개발용) ---
+# 이 부분은 `uvicorn`으로 직접 실행할 때 사용됩니다.
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -73,4 +73,12 @@ class LawClient:
             data = resp.json()
             # API 응답 구조가 가변적이므로 여러 키를 확인
             law_info = data.get("법령", {}).get("기본정보", data.get("law"))
-            if not
+            if not law_info:
+                raise LawNotFoundError(f"ID '{law_id}'에 해당하는 법령을 찾을 수 없습니다.")
+            return law_info
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            raise UpstreamServiceError(f"법령 상세 정보({law_id}) 조회 실패", detail=str(e)) from e
+        except LawNotFoundError:
+            raise
+        except Exception as e:
+            raise UpstreamServiceError(f"법령 상세 정보({law_id}) 처리 중 예외 발생", detail=str(e)) from e
