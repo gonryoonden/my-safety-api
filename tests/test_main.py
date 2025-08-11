@@ -31,7 +31,7 @@ def test_get_law_detail_success(client: TestClient):
     """법령 상세 조회 성공 케이스 테스트"""
     law_id = "007363"
     # 외부 API 호출을 가로채서 미리 정의된 응답을 반환하도록 설정
-    respx.get(f"https://www.law.go.kr/DRF/lawService.do?OC=TEST_API_KEY&target=law&type=JSON&ID={law_id}").mock(
+    respx.get(url__regex=r"https://www.law.go.kr/DRF/lawService.do.*").mock(
         return_value=httpx.Response(200, json=law_detail_response_factory(
             law_id, "산업안전보건법", "20250101", "mst123"
         ))
@@ -47,7 +47,7 @@ def test_get_law_detail_success(client: TestClient):
 def test_get_law_detail_not_found(client: TestClient):
     """법령 상세 조회 404 실패 케이스 테스트"""
     law_id = "999999"
-    respx.get(f"https://www.law.go.kr/DRF/lawService.do?OC=TEST_API_KEY&target=law&type=JSON&ID={law_id}").mock(
+    respx.get(url__regex=r"https://www.law.go.kr/DRF/lawService.do.*").mock(
         return_value=httpx.Response(404)
     )
     response = client.get(f"/laws/{law_id}")

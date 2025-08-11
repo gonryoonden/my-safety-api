@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 import os
-import re
+import urllib.parse  # httpx.utils.quote 대신 표준 라이브러리 사용
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from typing import Dict, List, Optional, Tuple
@@ -47,11 +47,12 @@ class LawClient:
             raise httpx.HTTPStatusError(
                 f"HTTP {response.status_code} error", request=response.request, response=response
             )
+        # 404와 같은 다른 클라이언트 오류는 여기서 처리하지 않고, 호출한 함수에서 처리하도록 함
         response.raise_for_status()
         return response
 
     async def search_laws(self, q: str, page: int = 1, size: int = 10) -> Tuple[List[Dict], int]:
-        encoded_q = httpx.utils.quote(q.strip())
+        encoded_q = urllib.parse.quote(q.strip())
         json_url = f"{self.base_url}/lawSearch.do?OC={self.oc}&target=law&type=JSON&query={encoded_q}&display={size}&page={page}"
         try:
             resp = await self._get(json_url, headers={"Accept": "application/json"})
@@ -71,14 +72,24 @@ class LawClient:
         try:
             resp = await self._get(detail_url, headers={"Accept": "application/json"})
             data = resp.json()
-            # API 응답 구조가 가변적이므로 여러 키를 확인
-            law_info = data.get("법령", {}).get("기본정보", data.get("law"))
+            law_info = data.get("법령", {}).get("기본정보", data.get("law")) # API 응답 구조가 가변적이므로 여러 키를 확인
             if not law_info:
-                raise LawNotFoundError(f"ID '{law_id}'에 해당하는 법령을 찾을 수 없습니다.")
-            return law_info
-        except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            raise UpstreamServiceError(f"법령 상세 정보({law_id}) 조회 실패", detail=str(e)) from e
-        except LawNotFoundError:
-            raise
+                raise LawNotFoundError()
+
+            mst = law_info.get("MST", law_info.get("법령일련번호", ""))
+            source_url = f"{self.base_url}/lawService.do?OC={self.oc}&target=law&MST={mst}&type=HTML"
+            
+            # API 응답 키(한글)를 우리 Pydantic 모델 키(영문)로 변환하여 반환
+            return {
+                "law_id": law_id,
+                "title": law_info.get("법령명_한글", law_info.get("법령명한글", "")),
+                "effective_date": law_info.get("시행일자", ""),
+                "source_url": source_url
+            }
+        except httpx.HTTPStatusError as e:
+            # 404 오류를 명시적으로 잡아서 LawNotFoundError로 변환
+            if e.response.status_code == 404:
+                raise LawNotFoundError() from e
+            raise UpstreamServiceError("법령 상세 조회 서비스 호출 실패", detail=str(e)) from e
         except Exception as e:
-            raise UpstreamServiceError(f"법령 상세 정보({law_id}) 처리 중 예외 발생", detail=str(e)) from e
+            raise UpstreamServiceError("법령 상세 정보 처리 중 예외 발생", detail=str(e)) from e
