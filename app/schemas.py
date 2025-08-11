@@ -9,6 +9,7 @@ class LawSearchItem(BaseModel):
     law_id: str = Field(..., description="법령 고유 ID")
     title: str = Field(..., description="법령명")
     effective_date: str = Field(..., description="시행일자")
+    promulgation_date: Optional[str] = None  # 신규 필드
 
 class SearchResponse(BaseModel):
     """법령 검색 API의 응답 모델"""

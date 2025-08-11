@@ -57,10 +57,12 @@ class LawClient:
         try:
             resp = await self._get(json_url, headers={"Accept": "application/json"})
             data = resp.json()
-            items = data.get("law", [])
+            container = data.get("LawSearch", data)  # "LawSearch" 키가 있으면 그 값을 사용
+            items = container.get("law", [])
             if isinstance(items, dict):
                 items = [items]
-            total = int(data.get("totalCnt", 0))
+            total = int(container.get("totalCnt", 0))
+
             return items, total
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             raise UpstreamServiceError("법령 검색 서비스 호출 실패", detail=str(e)) from e
@@ -76,8 +78,11 @@ class LawClient:
             if not law_info:
                 raise LawNotFoundError()
 
-            mst = law_info.get("MST", law_info.get("법령일련번호", ""))
-            source_url = f"{self.base_url}/lawService.do?OC={self.oc}&target=law&MST={mst}&type=HTML"
+            mst = law_info.get("MST") or law_info.get("법령일련번호")
+            if mst:
+                source_url = f"{self.base_url}/lawService.do?OC={self.oc}&target=law&MST={mst}&type=HTML"
+            else:
+                source_url = f"{self.base_url}/lawService.do?OC={self.oc}&target=law&ID={law_id}&type=HTML"
             
             # API 응답 키(한글)를 우리 Pydantic 모델 키(영문)로 변환하여 반환
             return {

@@ -1,5 +1,6 @@
 # main.py
 
+from dotenv import load_dotenv; load_dotenv()
 from __future__ import annotations
 import asyncio
 from typing import AsyncGenerator
@@ -75,6 +76,7 @@ async def search_laws(
             law_id=str(item.get("법령ID", "")),
             title=str(item.get("법령명한글", "")),
             effective_date=str(item.get("시행일자", "")),
+            promulgation_date=str(item.get("공포일자", "")) if item.get("공포일자") else None
         )
         for item in items
     ]
