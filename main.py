@@ -68,12 +68,11 @@ async def search_laws(
     """
     items, total = await client.search_laws(q, page=page, size=size)
 
-    # N+1 호출 제거: 목록 API가 반환한 시행일자를 바로 사용합니다.
+    # N+1 API 호출을 제거하고, 검색 결과에 포함된 데이터를 바로 사용합니다.
     search_items = [
         LawSearchItem(
             law_id=str(item.get("법령ID", "")),
             title=str(item.get("법령명한글", "")),
-            # API 응답 필드명 '시행일자'를 사용
             effective_date=str(item.get("시행일자", "")),
         )
         for item in items

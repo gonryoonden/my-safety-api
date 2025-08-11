@@ -47,7 +47,6 @@ class LawClient:
             raise httpx.HTTPStatusError(
                 f"HTTP {response.status_code} error", request=response.request, response=response
             )
-        # 404와 같은 다른 클라이언트 오류는 재시도하지 않고 즉시 예외 발생
         response.raise_for_status()
         return response
 
@@ -58,7 +57,6 @@ class LawClient:
             resp = await self._get(json_url, headers={"Accept": "application/json"})
             data = resp.json()
             items = data.get("law", [])
-            # API 응답이 단일 객체일 경우 리스트로 감싸기
             if isinstance(items, dict):
                 items = [items]
             total = int(data.get("totalCnt", 0))
@@ -69,4 +67,10 @@ class LawClient:
             raise UpstreamServiceError("법령 검색 결과 처리 중 예외 발생", detail=str(e)) from e
 
     async def get_law_detail(self, law_id: str) -> Dict:
-        # 법령 상세정보는 MST(
+        detail_url = f"{self.base_url}/lawService.do?OC={self.oc}&target=law&type=JSON&ID={law_id}"
+        try:
+            resp = await self._get(detail_url, headers={"Accept": "application/json"})
+            data = resp.json()
+            # API 응답 구조가 가변적이므로 여러 키를 확인
+            law_info = data.get("법령", {}).get("기본정보", data.get("law"))
+            if not
