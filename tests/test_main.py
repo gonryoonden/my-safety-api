@@ -70,4 +70,28 @@ def test_search_laws_upstream_error(client: TestClient):
 
     assert response.status_code == 503 # 우리는 503으로 응답하기로 정의했음
     assert response.json()["code"] == "UPSTREAM_ERROR"
-    
+
+    @respx.mock
+def test_search_laws_success(client: TestClient):
+    """법령 검색 성공 케이스 테스트"""
+    # lawSearch.do API 호출을 가로채서 미리 정의된 응답을 반환
+    search_query = "산업안전"
+    respx.get(f"https://www.law.go.kr/DRF/lawSearch.do?OC=TEST_API_KEY&target=law&type=JSON&query={search_query}&display=10&page=1").mock(
+        return_value=httpx.Response(200, json={
+            "law": [
+                {"법령ID": "123", "법령명한글": "산업안전보건법", "시행일자": "20250101"},
+                {"법령ID": "456", "법령명한글": "산업안전보건법 시행령", "시행일자": "20250301"},
+            ],
+            "totalCnt": 2
+        })
+    )
+
+    response = client.get(f"/laws/search?q={search_query}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+    assert len(data["items"]) == 2
+    assert data["items"][0]["law_id"] == "123"
+    assert data["items"][0]["title"] == "산업안전보건법"
+    assert data["items"][0]["effective_date"] == "20250101"

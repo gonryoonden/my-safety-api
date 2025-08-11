@@ -68,28 +68,18 @@ async def search_laws(
     """
     items, total = await client.search_laws(q, page=page, size=size)
 
-    # 검색된 각 법령의 상세 정보를 비동기적으로 가져와 시행일자를 보강합니다.
-    async def fetch_effective_date(law_id: str):
-        try:
-            detail = await client.get_law_detail(law_id)
-            return detail.get("effective_date")
-        except (LawNotFoundError, UpstreamServiceError):
-            return None
-
-    tasks = [fetch_effective_date(str(item.get("LAW_ID"))) for item in items]
-    effective_dates = await asyncio.gather(*tasks)
-
+    # N+1 호출 제거: 목록 API가 반환한 시행일자를 바로 사용합니다.
     search_items = [
         LawSearchItem(
-            law_id=str(item.get("LAW_ID")),
-            title=str(item.get("LAW_NM")),
-            effective_date=eff_date,
+            law_id=str(item.get("법령ID", "")),
+            title=str(item.get("법령명한글", "")),
+            # API 응답 필드명 '시행일자'를 사용
+            effective_date=str(item.get("시행일자", "")),
         )
-        for item, eff_date in zip(items, effective_dates)
+        for item in items
     ]
 
     return SearchResponse(items=search_items, page=page, size=size, total=total)
-
 
 @app.get(
     "/laws/{law_id}",

@@ -6,6 +6,7 @@ import re
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from typing import Dict, List, Optional, Tuple
+
 class LawNotFoundError(Exception):
     """주어진 ID로 법령을 찾을 수 없을 때 발생하는 예외"""
     pass
@@ -46,53 +47,26 @@ class LawClient:
             raise httpx.HTTPStatusError(
                 f"HTTP {response.status_code} error", request=response.request, response=response
             )
+        # 404와 같은 다른 클라이언트 오류는 재시도하지 않고 즉시 예외 발생
         response.raise_for_status()
         return response
 
     async def search_laws(self, q: str, page: int = 1, size: int = 10) -> Tuple[List[Dict], int]:
-        # ... (이전 답변의 law_client.py 내 search_laws 함수 내용과 동일) ...
-        # 이 부분은 매우 길기 때문에 생략하며, 이전 답변에서 제공된 코드를 그대로 사용하시면 됩니다.
-        # 핵심은 LawClient 클래스 안에 이 함수가 포함된다는 것입니다.
-        # (실제 구현 시에는 전체 코드를 붙여넣어야 합니다.)
-        # For brevity, this is a placeholder. In reality, you'd paste the full function code.
-        # Start of placeholder
         encoded_q = httpx.utils.quote(q.strip())
         json_url = f"{self.base_url}/lawSearch.do?OC={self.oc}&target=law&type=JSON&query={encoded_q}&display={size}&page={page}"
         try:
             resp = await self._get(json_url, headers={"Accept": "application/json"})
             data = resp.json()
             items = data.get("law", [])
-            total = int(data.get("totalCount", 0))
+            # API 응답이 단일 객체일 경우 리스트로 감싸기
+            if isinstance(items, dict):
+                items = [items]
+            total = int(data.get("totalCnt", 0))
             return items, total
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            raise UpstreamServiceError("법령 검색 서비스 호출 실패", detail=str(e)) from e
         except Exception as e:
-            raise UpstreamServiceError("Search failed", detail=str(e)) from e
-        # End of placeholder
+            raise UpstreamServiceError("법령 검색 결과 처리 중 예외 발생", detail=str(e)) from e
 
     async def get_law_detail(self, law_id: str) -> Dict:
-        # ... (이전 답변의 law_client.py 내 get_law_detail 함수 내용과 동일) ...
-        # (실제 구현 시에는 전체 코드를 붙여넣어야 합니다.)
-        # For brevity, this is a placeholder. In reality, you'd paste the full function code.
-        # Start of placeholder
-        # Simplified logic: In a real scenario, this would likely involve another search to get MST
-        detail_url = f"{self.base_url}/lawService.do?OC={self.oc}&target=law&type=JSON&ID={law_id}"
-        try:
-            resp = await self._get(detail_url, headers={"Accept": "application/json"})
-            if resp.status_code == 404:
-                raise LawNotFoundError()
-            data = resp.json()
-            law_info = data.get("law", {})
-            source_url = f"{self.base_url}/lawService.do?OC={self.oc}&target=law&MST={law_info.get('MST', '')}&type=HTML"
-            return {
-                "law_id": law_id,
-                "title": law_info.get("LAW_NM", ""),
-                "effective_date": law_info.get("EFYD", ""),
-                "source_url": source_url
-            }
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                raise LawNotFoundError() from e
-            raise UpstreamServiceError("Get detail failed", detail=str(e)) from e
-        except Exception as e:
-            raise UpstreamServiceError("Get detail failed", detail=str(e)) from e
-        # End of placeholder
-```
+        # 법령 상세정보는 MST(
