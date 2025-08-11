@@ -1,0 +1,18 @@
+# requirements.txt
+
+# FastAPI 프레임워크와 ASGI 서버
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.1
+
+# 외부 API 호출을 위한 HTTP 클라이언트
+httpx>=0.27,<0.28
+
+# 재시도 로직을 위한 라이브러리
+tenacity>=8,<9
+
+# 테스트 실행 및 모킹 라이브러리
+pytest>=8,<9
+respx>=0.21,<0.22
+
+# .env 파일에서 환경 변수를 로드하기 위한 라이브러리
+python-dotenv>=1,<2
