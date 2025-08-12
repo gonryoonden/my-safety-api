@@ -20,14 +20,23 @@ class UpstreamServiceError(Exception):
 
 class LawClient:
     """법령 검색 및 상세 정보 조회를 위한 클라이언트"""
-    DEFAULT_BASE = "https://www.law.go.kr/DRF"
+    DEFAULT_BASE = "http://www.law.go.kr/DRF" # 가이드 준수: DRF는 http 권장
 
     def __init__(self, oc: Optional[str] = None, base_url: Optional[str] = None):
         self.oc = oc or os.getenv("LAW_OC")
         if not self.oc:
             raise ValueError("LAW_OC 환경 변수가 설정되어야 합니다.")
         self.base_url = base_url or os.getenv("LAW_BASE", self.DEFAULT_BASE)
-        self._client = httpx.AsyncClient(timeout=5.0)
+        # 브라우저 유사 헤더로 WAF/콘텐츠 협상 이슈 회피
+        self._client = httpx.AsyncClient(
+            timeout=5.0,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/124.0 Safari/537.36 my-safety-api/1.0"
+            }
+        )
 
     async def close(self):
         await self._client.aclose()
@@ -74,6 +83,13 @@ class LawClient:
 
         try:
             resp = await self._get(url, headers={"Accept": "application/json"})
+            # --- 👇 여기부터 디버깅 코드 추가 👇 ---
+            print("--- DEBUG START ---")
+            print(f"Request URL: {url}")
+            print(f"Upstream Status Code: {resp.status_code}")
+            print(f"Upstream Response Text: {resp.text}") # 이 부분이 가장 중요합니다!
+            print("--- DEBUG END ---")
+            # --- 👆 여기까지 디버깅 코드 추가 👆 ---
             data = resp.json()
             container = data.get("LawSearch", data)
             items = container.get("law", [])
