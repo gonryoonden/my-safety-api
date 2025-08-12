@@ -9,7 +9,10 @@ from fastapi.responses import JSONResponse
 
 # 우리가 분리한 모듈들을 임포트합니다.
 from app.clients.law_client import LawClient, LawNotFoundError, UpstreamServiceError
-from app.schemas import ErrorResponse, LawDetail, LawSearchItem, SearchResponse
+from app.schemas import (
+    ErrorResponse, LawDetail, LawSearchItem, SearchResponse,
+    AttachmentItem, AttachmentSearchResponse
+)
 
 # --- FastAPI 앱 설정 ---
 app = FastAPI(
@@ -19,8 +22,6 @@ app = FastAPI(
 )
 
 # --- 의존성 주입 (Dependency Injection) ---
-# 앱 전체에서 공유할 LawClient 인스턴스를 생성합니다.
-# 이렇게 하면 API 요청마다 클라이언트를 새로 만들지 않아 효율적입니다.
 async def get_law_client() -> AsyncGenerator[LawClient, None]:
     client = LawClient()
     try:
@@ -29,8 +30,6 @@ async def get_law_client() -> AsyncGenerator[LawClient, None]:
         await client.close()
 
 # --- 예외 처리 핸들러 (Exception Handlers) ---
-# 프로젝트 전역에서 발생하는 특정 오류를 잡아 표준화된 JSON 형식으로 반환합니다.
-
 @app.exception_handler(LawNotFoundError)
 async def handle_law_not_found(request: Request, exc: LawNotFoundError):
     return JSONResponse(
@@ -49,7 +48,98 @@ async def handle_upstream_error(request: Request, exc: UpstreamServiceError):
         ).model_dump(),
     )
 
+@app.exception_handler(ValueError)
+async def handle_value_error(request: Request, exc: ValueError):
+    return JSONResponse(
+        status_code=400,
+        content=ErrorResponse(
+            code="INVALID_PARAMETER",
+            message="잘못된 매개변수입니다.",
+            detail=str(exc),
+        ).model_dump(),
+    )
+
 # --- API 라우트 (Endpoints) ---
+
+@app.get("/debug/law-api")
+async def debug_law_api(
+    q: str = Query("산업안전", description="테스트할 검색어"),
+    client: LawClient = Depends(get_law_client),
+):
+    """
+    법령 API 연결 상태를 디버깅하는 엔드포인트
+    """
+    import httpx
+    import urllib.parse
+    import os
+    
+    # 환경 변수 확인
+    oc = os.getenv("LAW_OC")
+    base_url = os.getenv("LAW_BASE", "http://www.law.go.kr/DRF")
+    
+    # 직접 요청 테스트
+    encoded_q = urllib.parse.quote(q, safe="", encoding="utf-8")
+    test_url = f"{base_url}/lawSearch.do?OC={oc}&target=law&type=JSON&query={encoded_q}&display=5&page=1"
+    
+    debug_info = {
+        "environment": {
+            "LAW_OC": oc[:4] + "***" if oc and len(oc) > 4 else "NOT_SET",
+            "LAW_BASE": base_url,
+        },
+        "test_url": test_url,
+        "encoded_query": encoded_q,
+        "original_query": q,
+    }
+    
+    try:
+        # httpx로 직접 요청
+        async with httpx.AsyncClient(timeout=30.0) as direct_client:
+            response = await direct_client.get(test_url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            })
+            
+            debug_info.update({
+                "direct_request": {
+                    "status_code": response.status_code,
+                    "content_type": response.headers.get("content-type"),
+                    "content_length": len(response.text),
+                    "response_preview": response.text[:500],
+                    "is_json": False,
+                    "parsed_data": None,
+                }
+            })
+            
+            # JSON 파싱 시도
+            try:
+                json_data = response.json()
+                debug_info["direct_request"]["is_json"] = True
+                debug_info["direct_request"]["parsed_data"] = json_data
+            except Exception as parse_error:
+                debug_info["direct_request"]["json_parse_error"] = str(parse_error)
+        
+        # 클라이언트를 통한 요청
+        try:
+            items, total = await client.search_laws(q, page=1, size=5)
+            debug_info["client_request"] = {
+                "success": True,
+                "total_results": total,
+                "items_count": len(items),
+                "sample_items": items[:2] if items else [],
+            }
+        except Exception as client_error:
+            debug_info["client_request"] = {
+                "success": False,
+                "error": str(client_error),
+                "error_type": type(client_error).__name__,
+            }
+            
+    except Exception as e:
+        debug_info["direct_request_error"] = {
+            "error": str(e),
+            "error_type": type(e).__name__,
+        }
+    
+    return debug_info
 
 @app.get("/laws/search", response_model=SearchResponse, summary="법령 검색")
 async def search_laws(
@@ -70,15 +160,18 @@ async def search_laws(
         law_id = it.get("LAW_ID") or it.get("법령ID")
         title = it.get("LAW_NM") or it.get("법령명한글")
         eff = it.get("EF_YD") or it.get("시행일자")
+        promulgation = it.get("PO_DT") or it.get("공포일자")  # 공포일자 추가
+        
         mapped.append(
-            {
-                "law_id": law_id,
-                "title": title,
-                "effective_date": eff,  # YYYYMMDD 형식. 필요 시 모델/후처리로 YYYY-MM-DD 변환
-            }
+            LawSearchItem(
+                law_id=law_id or "",
+                title=title or "",
+                effective_date=eff or "",
+                promulgation_date=promulgation,
+            )
         )
 
-    return {"items": mapped, "page": page, "size": size, "total": total}
+    return SearchResponse(items=mapped, page=page, size=size, total=total)
 
 @app.get(
     "/laws/{law_id}",
@@ -98,10 +191,55 @@ async def get_law_detail(
     """
     detail_data = await client.get_law_detail(law_id)
     return LawDetail(**detail_data)
+
+@app.get(
+    "/attachments/search", 
+    response_model=AttachmentSearchResponse, 
+    summary="별표/서식 검색"
+)
+async def search_attachments(
+    q: str = Query(..., description="검색어"),
+    page: int = Query(1, ge=1),
+    size: int = Query(10, ge=1, le=100),
+    client: LawClient = Depends(get_law_client),
+) -> AttachmentSearchResponse:
+    """
+    별표/서식을 검색합니다.
+    """
+    items, total = await client.search_attachments(q, page=page, size=size)
     
+    mapped = []
+    for it in items:
+        # 실제 API 응답 구조에 맞게 키 매핑
+        law_id = it.get("법령ID") or it.get("LAW_ID") or ""
+        law_title = it.get("법령명") or it.get("LAW_NM") or ""
+        attachment_name = it.get("별표서식명") or it.get("ATTACHMENT_NAME") or ""
+        attachment_type = it.get("종류") or it.get("TYPE") or ""
+        attachment_no = it.get("번호") or it.get("NO")
+        ministry = it.get("소관부처") or it.get("MINISTRY")
+        promulgation_date = it.get("공포일자") or it.get("PO_DT")
+        html_link = it.get("HTML링크") or it.get("HTML_LINK")
+        file_link = it.get("파일링크") or it.get("FILE_LINK")
+        pdf_link = it.get("PDF링크") or it.get("PDF_LINK")
+        
+        mapped.append(
+            AttachmentItem(
+                law_id=law_id,
+                law_title=law_title,
+                attachment_name=attachment_name,
+                attachment_type=attachment_type,
+                attachment_no=attachment_no,
+                ministry=ministry,
+                promulgation_date=promulgation_date,
+                html_link=html_link,
+                file_link=file_link,
+                pdf_link=pdf_link,
+            )
+        )
+    
+    return AttachmentSearchResponse(items=mapped, page=page, size=size, total=total)
 
 # --- 앱 실행 (로컬 개발용) ---
-# 이 부분은 `uvicorn`으로 직접 실행할 때 사용됩니다.
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
