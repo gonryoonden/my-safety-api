@@ -51,37 +51,34 @@ async def handle_upstream_error(request: Request, exc: UpstreamServiceError):
 
 # --- API 라우트 (Endpoints) ---
 
-@app.get(
-    "/laws/search",
-    response_model=SearchResponse,
-    summary="법령 검색",
-    responses={
-        503: {"model": ErrorResponse, "description": "상위 서비스(law.go.kr) 오류"},
-    },
-)
+@app.get("/laws/search", response_model=SearchResponse, summary="법령 검색")
 async def search_laws(
-    q: str = Query(..., description="검색할 법령명 키워드"),
-    page: int = Query(1, ge=1, description="페이지 번호"),
-    size: int = Query(10, ge=1, le=100, description="페이지 당 결과 수", alias="display"),
+    q: str = Query(..., description="검색어"),
+    page: int = Query(1, ge=1),
+    size: int = Query(10, ge=1, le=100),
+    search: int = Query(1, ge=1, le=2, description="1: 법령명, 2: 본문"),
     client: LawClient = Depends(get_law_client),
 ) -> SearchResponse:
     """
-    주어진 키워드(q)로 법령을 검색하고, 페이지네이션된 결과를 반환합니다.
+    법령 목록을 검색합니다.
     """
-    items, total = await client.search_laws(q, page=page, size=size)
+    items, total = await client.search_laws(q, page=page, size=size, search=search)
 
-    # N+1 API 호출을 제거하고, 검색 결과에 포함된 데이터를 바로 사용합니다.
-    search_items = [
-        LawSearchItem(
-            law_id=str(item.get("법령ID", "")),
-            title=str(item.get("법령명한글", "")),
-            effective_date=str(item.get("시행일자", "")),
-            promulgation_date=str(item.get("공포일자", "")) if item.get("공포일자") else None
+    # 외부 응답 키 차이 흡수: 우선 영문 키, 없으면 한글 키 폴백
+    mapped = []
+    for it in items:
+        law_id = it.get("LAW_ID") or it.get("법령ID")
+        title = it.get("LAW_NM") or it.get("법령명한글")
+        eff = it.get("EF_YD") or it.get("시행일자")
+        mapped.append(
+            {
+                "law_id": law_id,
+                "title": title,
+                "effective_date": eff,  # YYYYMMDD 형식. 필요 시 모델/후처리로 YYYY-MM-DD 변환
+            }
         )
-        for item in items
-    ]
 
-    return SearchResponse(items=search_items, page=page, size=size, total=total)
+    return {"items": mapped, "page": page, "size": size, "total": total}
 
 @app.get(
     "/laws/{law_id}",

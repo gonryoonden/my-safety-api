@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 import os
-import urllib.parse  # httpx.utils.quote 대신 표준 라이브러리 사용
+import urllib.parse
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 class LawNotFoundError(Exception):
     """주어진 ID로 법령을 찾을 수 없을 때 발생하는 예외"""
@@ -47,24 +48,41 @@ class LawClient:
             raise httpx.HTTPStatusError(
                 f"HTTP {response.status_code} error", request=response.request, response=response
             )
-        # 404와 같은 다른 클라이언트 오류는 여기서 처리하지 않고, 호출한 함수에서 처리하도록 함
         response.raise_for_status()
         return response
 
-    async def search_laws(self, q: str, page: int = 1, size: int = 10) -> Tuple[List[Dict], int]:
-        encoded_q = urllib.parse.quote(q.strip())
-        json_url = f"{self.base_url}/lawSearch.do?OC={self.oc}&target=law&type=JSON&query={encoded_q}&display={size}&page={page}"
+    async def search_laws(
+        self,
+        q: str,
+        page: int = 1,
+        size: int = 10,
+        search: int = 1,  # 1: 법령명, 2: 본문
+    ) -> Tuple[List[Dict], int]:
+        # 유효성 검사: 가이드 기준 1 또는 2만 허용
+        if search not in (1, 2):
+            raise ValueError("search must be 1 (법령명) or 2 (본문)")
+
+        # 표준 라이브러리 quote 사용 (httpx.utils.quote 절대 사용하지 않음)
+        encoded_q = quote(q.strip(), safe="")
+
+        url = (
+            f"{self.base_url}/lawSearch.do"
+            f"?OC={self.oc}&target=law&type=JSON"
+            f"&query={encoded_q}&display={size}&page={page}"
+            f"&search={search}"
+        )
+
         try:
-            resp = await self._get(json_url, headers={"Accept": "application/json"})
+            resp = await self._get(url, headers={"Accept": "application/json"})
             data = resp.json()
-            container = data.get("LawSearch", data)  # "LawSearch" 키가 있으면 그 값을 사용
+            container = data.get("LawSearch", data)
             items = container.get("law", [])
             if isinstance(items, dict):
                 items = [items]
             total = int(container.get("totalCnt", 0))
-
             return items, total
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            # 상위 서비스 오류를 표준 포맷으로 매핑 (FastAPI에서 503으로 변환됨)
             raise UpstreamServiceError("법령 검색 서비스 호출 실패", detail=str(e)) from e
         except Exception as e:
             raise UpstreamServiceError("법령 검색 결과 처리 중 예외 발생", detail=str(e)) from e
@@ -74,27 +92,57 @@ class LawClient:
         try:
             resp = await self._get(detail_url, headers={"Accept": "application/json"})
             data = resp.json()
-            law_info = data.get("법령", {}).get("기본정보", data.get("law")) # API 응답 구조가 가변적이므로 여러 키를 확인
+            # API 응답 구조가 가변적이므로 여러 키를 확인
+            law_info = data.get("법령", {}).get("기본정보", data.get("law", {}))
             if not law_info:
                 raise LawNotFoundError()
 
             mst = law_info.get("MST") or law_info.get("법령일련번호")
+            title = (
+                law_info.get("법령명_한글")
+                or law_info.get("법령명한글")
+                or law_info.get("LAW_NM")
+                or ""
+            )
+            eff = law_info.get("시행일자") or law_info.get("EF_YD") or ""
+
+            # HTML 원문 링크 구성 (MST 우선, 없으면 ID)
             if mst:
-                source_url = f"{self.base_url}/lawService.do?OC={self.oc}&target=law&MST={mst}&type=HTML"
+                # MST가 있으면 가능한 경우 efYd(시행일자)도 함께 붙여 정확 버전 링크
+                ef_part = f"&efYd={eff}" if eff else ""
+                src = f"{self.base_url}/lawService.do?OC={self.oc}&target=law&type=HTML&MST={mst}{ef_part}"
             else:
-                source_url = f"{self.base_url}/lawService.do?OC={self.oc}&target=law&ID={law_id}&type=HTML"
-            
-            # API 응답 키(한글)를 우리 Pydantic 모델 키(영문)로 변환하여 반환
+                # ID만으로 접근 (efYd는 일반적으로 MST와 함께 제공되므로 생략)
+                src = f"{self.base_url}/lawService.do?OC={self.oc}&target=law&type=HTML&ID={law_id}"
+
             return {
                 "law_id": law_id,
-                "title": law_info.get("법령명_한글", law_info.get("법령명한글", "")),
-                "effective_date": law_info.get("시행일자", ""),
-                "source_url": source_url
+                "title": title,
+                "effective_date": eff,
+                "source_url": src,
             }
+
         except httpx.HTTPStatusError as e:
-            # 404 오류를 명시적으로 잡아서 LawNotFoundError로 변환
             if e.response.status_code == 404:
                 raise LawNotFoundError() from e
             raise UpstreamServiceError("법령 상세 조회 서비스 호출 실패", detail=str(e)) from e
         except Exception as e:
             raise UpstreamServiceError("법령 상세 정보 처리 중 예외 발생", detail=str(e)) from e
+
+    async def search_attachments(self, q: str, page: int = 1, size: int = 10) -> Tuple[List[Dict], int]:
+        encoded_q = urllib.parse.quote(q.strip())
+        # '별표, 서식(법령)정보 가이드.txt'에 따라 target=licbyl 로 설정
+        json_url = f"{self.base_url}/lawSearch.do?OC={self.oc}&target=licbyl&type=JSON&query={encoded_q}&display={size}&page={page}"
+        try:
+            resp = await self._get(json_url, headers={"Accept": "application/json"})
+            data = resp.json()
+            container = data.get("licBylSearch", data) # 가이드에 명시된 응답 키
+            items = container.get("licbyl", [])
+            if isinstance(items, dict):
+                items = [items]
+            total = int(container.get("totalCnt", 0))
+            return items, total
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            raise UpstreamServiceError("별표/서식 검색 서비스 호출 실패", detail=str(e)) from e
+        except Exception as e:
+            raise UpstreamServiceError("별표/서식 검색 결과 처리 중 예외 발생", detail=str(e)) from e
