@@ -74,6 +74,13 @@ class LawClient:
 
         try:
             resp = await self._get(url, headers={"Accept": "application/json"})
+            # --- 👇 여기부터 디버깅 코드 추가 👇 ---
+            print("--- DEBUG START ---")
+            print(f"Request URL: {url}")
+            print(f"Upstream Status Code: {resp.status_code}")
+            print(f"Upstream Response Text: {resp.text}") # 이 부분이 가장 중요합니다!
+            print("--- DEBUG END ---")
+            # --- 👆 여기까지 디버깅 코드 추가 👆 ---
             data = resp.json()
             container = data.get("LawSearch", data)
             items = container.get("law", [])
