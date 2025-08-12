@@ -33,27 +33,19 @@ class LawClient:
             raise ValueError("LAW_OC 환경 변수가 설정되어야 합니다.")
         self.base_url = base_url or os.getenv("LAW_BASE", self.DEFAULT_BASE)
         
-        # 실제 브라우저와 동일한 헤더 설정 (크롬 기준)
+                # --- 👇 이 부분을 아래 코드로 교체하세요 👇 ---
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=15.0, read=30.0, write=15.0, pool=20.0),
+            timeout=httpx.Timeout(10.0),
             follow_redirects=True,
+            # 테스트 4에서 성공한 헤더 조합을 적용합니다.
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                 "Accept-Language": "ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3",
-                "Accept-Encoding": "gzip, deflate",
-                "DNT": "1",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
-                "Cache-Control": "max-age=0",
-                "Referer": "http://www.law.go.kr/"
-            },
-            http2=False,
+                "Referer": "http://www.law.go.kr/", # 가장 중요한 해결의 열쇠!
+            }
         )
+        # --- 👆 여기까지 교체 👆 ---
         
     async def close(self):
         await self._client.aclose()
