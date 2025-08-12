@@ -89,54 +89,91 @@ async def debug_law_api(
         "test_url": test_url,
         "encoded_query": encoded_q,
         "original_query": q,
+        "tests": {}
     }
     
-    try:
-        # httpx로 직접 요청
-        async with httpx.AsyncClient(timeout=30.0) as direct_client:
-            response = await direct_client.get(test_url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            })
-            
-            debug_info.update({
-                "direct_request": {
+    # 여러 가지 헤더 조합으로 테스트
+    test_headers = [
+        # 테스트 1: 기본 httpx 헤더
+        {},
+        
+        # 테스트 2: 간단한 브라우저 헤더
+        {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        },
+        
+        # 테스트 3: 완전한 브라우저 헤더 (크롬)
+        {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1"
+        },
+        
+        # 테스트 4: 정부사이트 접근용 헤더
+        {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3",
+            "Accept-Encoding": "gzip, deflate",
+            "Referer": "http://www.law.go.kr/",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1"
+        }
+    ]
+    
+    for i, headers in enumerate(test_headers, 1):
+        test_name = f"test_{i}"
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as test_client:
+                response = await test_client.get(test_url, headers=headers)
+                
+                test_result = {
+                    "headers_used": headers,
                     "status_code": response.status_code,
                     "content_type": response.headers.get("content-type"),
                     "content_length": len(response.text),
-                    "response_preview": response.text[:500],
+                    "response_preview": response.text[:300],
                     "is_json": False,
                     "parsed_data": None,
                 }
-            })
-            
-            # JSON 파싱 시도
-            try:
-                json_data = response.json()
-                debug_info["direct_request"]["is_json"] = True
-                debug_info["direct_request"]["parsed_data"] = json_data
-            except Exception as parse_error:
-                debug_info["direct_request"]["json_parse_error"] = str(parse_error)
-        
-        # 클라이언트를 통한 요청
-        try:
-            items, total = await client.search_laws(q, page=1, size=5)
-            debug_info["client_request"] = {
-                "success": True,
-                "total_results": total,
-                "items_count": len(items),
-                "sample_items": items[:2] if items else [],
+                
+                # JSON 파싱 시도
+                try:
+                    json_data = response.json()
+                    test_result["is_json"] = True
+                    test_result["parsed_data"] = json_data
+                    test_result["success"] = True
+                except Exception as parse_error:
+                    test_result["json_parse_error"] = str(parse_error)
+                    test_result["success"] = False
+                
+                debug_info["tests"][test_name] = test_result
+                
+        except Exception as e:
+            debug_info["tests"][test_name] = {
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "success": False
             }
-        except Exception as client_error:
-            debug_info["client_request"] = {
-                "success": False,
-                "error": str(client_error),
-                "error_type": type(client_error).__name__,
-            }
-            
-    except Exception as e:
-        debug_info["direct_request_error"] = {
-            "error": str(e),
-            "error_type": type(e).__name__,
+    
+    # 클라이언트를 통한 요청도 테스트
+    try:
+        items, total = await client.search_laws(q, page=1, size=5)
+        debug_info["client_request"] = {
+            "success": True,
+            "total_results": total,
+            "items_count": len(items),
+            "sample_items": items[:2] if items else [],
+        }
+    except Exception as client_error:
+        debug_info["client_request"] = {
+            "success": False,
+            "error": str(client_error),
+            "error_type": type(client_error).__name__,
         }
     
     return debug_info
