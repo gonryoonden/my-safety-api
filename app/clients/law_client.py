@@ -29,15 +29,21 @@ class LawClient:
         self.base_url = base_url or os.getenv("LAW_BASE", self.DEFAULT_BASE)
         # 브라우저 유사 헤더로 WAF/콘텐츠 협상 이슈 회피
         self._client = httpx.AsyncClient(
-            timeout=5.0,
+            timeout=httpx.Timeout(connect=6.0, read=20.0, write=10.0, pool=8.0),
+            follow_redirects=True,
             headers={
-                "Accept": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                              "AppleWebKit/537.36 (KHTML, like Gecko) "
-                              "Chrome/124.0 Safari/537.36 my-safety-api/1.0"
-            }
+                # 예전 성공 사례와 유사하게 UA만 필수로 유지
+                "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/91.0.4472.124 Safari/537.36"),
+                # 필요시 주석 해제
+                # "Accept-Language": "ko-KR,ko;q=0.9",
+                # "Referer": "http://www.law.go.kr/DRF/index.do",
+                "Connection": "close",
+            },
+            http2=False,
         )
-
+        
     async def close(self):
         await self._client.aclose()
 
@@ -65,7 +71,7 @@ class LawClient:
         q: str,
         page: int = 1,
         size: int = 10,
-        search: int = 1,  # 1: 법령명, 2: 본문
+        search: int = 1,  # 1: 법령명, 2: 본문 (2차 시도에만 사용)
     ) -> Tuple[List[Dict], int]:
         # 유효성 검사: 가이드 기준 1 또는 2만 허용
         if search not in (1, 2):
@@ -74,22 +80,27 @@ class LawClient:
         # 표준 라이브러리 quote 사용 (httpx.utils.quote 절대 사용하지 않음)
         encoded_q = quote(q.strip(), safe="")
 
-        url = (
+        # 1차: 예전 형태와 동일하게 'search' 미포함
+        url1 = (
             f"{self.base_url}/lawSearch.do"
             f"?OC={self.oc}&target=law&type=JSON"
             f"&query={encoded_q}&display={size}&page={page}"
-            f"&search={search}"
         )
-
         try:
-            resp = await self._get(url, headers={"Accept": "application/json"})
+            resp = await self._get(url1)
+
             # --- 👇 여기부터 디버깅 코드 추가 👇 ---
             print("--- DEBUG START ---")
-            print(f"Request URL: {url}")
+            print(f"Request URL: {url1}")
             print(f"Upstream Status Code: {resp.status_code}")
-            print(f"Upstream Response Text: {resp.text}") # 이 부분이 가장 중요합니다!
-            print("--- DEBUG END ---")
+            print(f"Upstream Content-Type: {resp.headers.get('content-type','')}")
+            print(f"Upstream Response Text: {resp.text}")
             # --- 👆 여기까지 디버깅 코드 추가 👆 ---
+            # HTML(오류페이지) 탐지 → 2차 시도
+            ctype = (resp.headers.get("content-type") or "").lower()
+            if "text/html" in ctype or "<html" in resp.text.lower() or "페이지 접속 실패" in resp.text:
+                raise ValueError("HTML_200_DETECTED")
+
             data = resp.json()
             container = data.get("LawSearch", data)
             items = container.get("law", [])
@@ -100,9 +111,37 @@ class LawClient:
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             # 상위 서비스 오류를 표준 포맷으로 매핑 (FastAPI에서 503으로 변환됨)
             raise UpstreamServiceError("법령 검색 서비스 호출 실패", detail=str(e)) from e
-        except Exception as e:
-            raise UpstreamServiceError("법령 검색 결과 처리 중 예외 발생", detail=str(e)) from e
-
+        except Exception:
+            # 2차: 'search' 파라미터를 붙여 재시도 (1 또는 2만 허용)
+            if search not in (1, 2):
+                search = 1
+            url2 = (
+                f"{self.base_url}/lawSearch.do"
+                f"?OC={self.oc}&target=law&type=JSON"
+                f"&query={encoded_q}&display={size}&page={page}&search={search}"
+            )
+            resp2 = await self._get(url2)
+            print("--- RETRY WITH 'search' ---")
+            print(f"Request URL: {url2}")
+            print(f"Upstream Content-Type: {resp2.headers.get('content-type','')}")
+            print(f"Upstream Response Text: {resp2.text}")
+            print("--- /RETRY ---")
+            ctype2 = (resp2.headers.get("content-type") or "").lower()
+            if "text/html" in ctype2 or "<html" in resp2.text.lower() or "페이지 접속 실패" in resp2.text:
+                raise UpstreamServiceError(
+                    "법령 검색 결과 처리 중 예외 발생",
+                    detail="UPSTREAM_INVALID_HTML_200",
+                )
+            try:
+                data2 = resp2.json()
+            except Exception as je:
+                raise UpstreamServiceError("법령 검색 결과 처리 중 예외 발생", detail=str(je)) from je
+            container = data2.get("LawSearch", data2)
+            items = container.get("law", [])
+            if isinstance(items, dict):
+                items = [items]
+            total = int(container.get("totalCnt", 0))
+            return items, total
     async def get_law_detail(self, law_id: str) -> Dict:
         detail_url = f"{self.base_url}/lawService.do?OC={self.oc}&target=law&type=JSON&ID={law_id}"
         try:
