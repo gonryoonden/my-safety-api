@@ -81,12 +81,14 @@ async def debug_law_api(
     encoded_q = urllib.parse.quote(q, safe="", encoding="utf-8")
     test_url = f"{base_url}/lawSearch.do?OC={oc}&target=law&type=JSON&query={encoded_q}&display=5&page=1"
     
+    masked_test_url = client._mask_oc_in_url(test_url)
+
     debug_info = {
         "environment": {
-            "LAW_OC": oc[:4] + "***" if oc and len(oc) > 4 else "NOT_SET",
+            "LAW_OC": oc[:4] + "****" if oc and len(oc) > 4 else "NOT_SET",
             "LAW_BASE": base_url,
         },
-        "test_url": test_url,
+        "test_url": masked_test_url,
         "encoded_query": encoded_q,
         "original_query": q,
         "tests": {}

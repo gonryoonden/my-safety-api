@@ -50,6 +50,15 @@ class LawClient:
     async def close(self):
         await self._client.aclose()
 
+    def _mask_oc_in_url(self, url: str) -> str:
+        """URL에서 OC 값을 마스킹합니다."""
+        if not self.oc:
+            return url
+        
+        # OC 값의 일부만 마스킹 (예: 앞 4자리만 노출)
+        masked_oc = self.oc[:4] + '****'
+        return url.replace(f"OC={self.oc}", f"OC={masked_oc}")
+
     async def _make_request_with_fallback(self, base_url: str, params: Dict[str, str]) -> httpx.Response:
         """여러 헤더 조합을 시도하여 요청을 보냅니다."""
         
@@ -90,7 +99,8 @@ class LawClient:
         
         for i, headers in enumerate(header_combinations, 1):
             try:
-                logger.info(f"헤더 조합 {i} 시도: {full_url}")
+                masked_url = self._mask_oc_in_url(full_url)
+                logger.info(f"헤더 조합 {i} 시도: {masked_url}")
                 
                 # 새로운 클라이언트로 요청 (헤더 덮어쓰기 방지)
                 async with httpx.AsyncClient(
@@ -112,10 +122,10 @@ class LawClient:
                         logger.info(f"헤더 조합 {i}에서 JSON 응답 수신")
                         return response
                         
-                    logger.warning(f"헤더 조합 {i} 실패: HTML 응답 (Content-Type: {content_type})")
+                    logger.warning(f"헤더 조합 {i} 실패: HTML 응답 (URL: {masked_url}, Content-Type: {content_type})")
                     
             except Exception as e:
-                logger.warning(f"헤더 조합 {i} 실패: {str(e)}")
+                logger.warning(f"헤더 조합 {i} 실패: {str(e)} (URL: {masked_url})")
                 last_error = e
                 continue
         
@@ -265,7 +275,7 @@ class LawClient:
                 "law_id": law_id,
                 "title": title,
                 "effective_date": eff,
-                "source_url": src,
+                "source_url": self._mask_oc_in_url(src),
             }
 
         except LawNotFoundError:
